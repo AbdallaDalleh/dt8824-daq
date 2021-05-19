@@ -4,13 +4,16 @@
 #include <unistd.h>
 
 #include <vector>
+#include <string>
 
 #include <epicsExport.h>
 #include <asynPortDriver.h>
 #include <asynOctetSyncIO.h>
 #include <iocsh.h>
+#include <epicsThread.h>
 
 using std::vector;
+using std::string;
 
 #define ADMIN_LOGIN		":SYST:PASS:CEN admin\r\n"
 #define CHANNEL_ENABLE	":AD:ENABLE ON, (@%d)\r\n"
@@ -19,7 +22,7 @@ using std::vector;
 #define ACQ_ARM			":AD:ARM\r\n"
 #define ACQ_INIT		":AD:INIT\r\n"
 #define ACQ_LAST_INDEX	":AD:STAT:SCA?\r\n"
-#define ACQ_FETCH		":AD:FETCH? %d,%d\r\n"
+#define ACQ_FETCH		":AD:FETCH? %d,%d"
 
 #define P_VOLTAGE_1		"voltage_ch1"
 
@@ -28,6 +31,8 @@ class DT8824 : public asynPortDriver
 public:
 	DT8824(const char* port_name, const char* name, int frequency, int buffer_size);
 	
+	void sendCommand(string cmd);
+	void sendCommand(string cmd, int value);
 	void performDAQ();
 	pthread_t daq_thread;
 
@@ -60,7 +65,8 @@ DT8824::DT8824(const char* port_name, const char* name, int frequency, int buffe
 					ASYN_MULTIDEVICE | ASYN_CANBLOCK,
 					1, 0, 0)
 {
-	int status = pasynOctetSyncIO->connect(name, 1, &this->asyn_user, NULL);
+	int status;
+	status = pasynOctetSyncIO->connect(name, 1, &this->asyn_user, NULL);
 
 	if(status != asynSuccess)
 	{
@@ -71,30 +77,15 @@ DT8824::DT8824(const char* port_name, const char* name, int frequency, int buffe
 
 	createParam(P_VOLTAGE_1, asynParamFloat64, &index_voltage);
 
-	snprintf(command, strlen(ADMIN_LOGIN), "%s", ADMIN_LOGIN);
-	status = pasynOctetSyncIO->write(this->asyn_user, command, strlen(command), 1, &this->bytes);
-	if(status != asynSuccess || this->bytes != strlen(command))
-	{
-		printf("ERROR: Could not enable protected commands to port %s\n", port_name);
-		return;
-	}
+	sendCommand(ADMIN_LOGIN);
 
 	for(int i = 1; i <= 4; i++)
 	{
-		snprintf(command, strlen(CHANNEL_ENABLE), CHANNEL_ENABLE, i);
-		status = pasynOctetSyncIO->write(this->asyn_user, command, strlen(command), 1, &this->bytes);
-		if(status != asynSuccess || this->bytes != strlen(command))
-		{
-			printf("ERROR: Could not enable channel %d on port %s\n", i, port_name);
-			return;
-		}
+		sendCommand(CHANNEL_ENABLE, i);
 	}
 
-	snprintf(command, strlen(ACQ_STOP), "%s", ACQ_STOP);
-	pasynOctetSyncIO->write(this->asyn_user, command, strlen(command), 1, &this->bytes);
-
-	snprintf(command, strlen(SET_FREQUENCY)+4, SET_FREQUENCY, frequency);
-	pasynOctetSyncIO->write(this->asyn_user, command, strlen(command), 1, &this->bytes);
+	sendCommand(ACQ_STOP);
+	sendCommand(SET_FREQUENCY, frequency);
 
 	channel_1.resize(buffer_size);
 	channel_2.resize(buffer_size);
@@ -107,29 +98,53 @@ DT8824::DT8824(const char* port_name, const char* name, int frequency, int buffe
 	}
 }
 
+void DT8824::sendCommand(string cmd)
+{
+	int status;
+	status = pasynOctetSyncIO->write(this->asyn_user, cmd.c_str(), cmd.length(), 1, &this->bytes);
+	if(status != asynSuccess || this->bytes != cmd.length())
+	{
+		printf("ERROR: Could not send command %s\n", cmd.c_str());
+		return;
+	}
+}
+
+void DT8824::sendCommand(string cmd, int value)
+{
+	int status;
+	char command[50];
+	memset(command, 0, sizeof(command));
+	snprintf(command, sizeof(command), cmd.c_str(), value);
+	status = pasynOctetSyncIO->write(this->asyn_user, command, strlen(command), 1, &this->bytes);
+	if(status != asynSuccess || this->bytes != strlen(command))
+	{
+		printf("ERROR: Could not send command %s\n", cmd.c_str());
+		return;
+	}
+}
+
 void DT8824::performDAQ()
 {
 	while(true)
 	{
 		lock();
-		snprintf(command, strlen(ACQ_STOP), "%s", ACQ_STOP);
-		pasynOctetSyncIO->write(this->asyn_user, command, strlen(command), 1, &this->bytes);
-		
-		snprintf(command, strlen(ACQ_ARM), "%s", ACQ_ARM);
-		pasynOctetSyncIO->write(this->asyn_user, command, strlen(command), 1, &this->bytes);
+		sendCommand(ACQ_STOP);
+		sendCommand(ACQ_ARM);
+		sendCommand(ACQ_INIT);
 
-		snprintf(command, strlen(ACQ_INIT), "%s", ACQ_INIT);
-		pasynOctetSyncIO->write(this->asyn_user, command, strlen(command), 1, &this->bytes);
-
-		sleep(1);
+		epicsThreadSleep(1);
 
 		int x;
+		size_t bytes_rx;
+		memset(command, 0, sizeof(command));
 		snprintf(command, strlen(ACQ_LAST_INDEX), "%s", ACQ_LAST_INDEX);
-		pasynOctetSyncIO->writeRead(this->asyn_user, command, strlen(command), this->read_buffer, sizeof(this->read_buffer), 1, &bytes, &bytes, &x);
-		printf("%s\n", read_buffer);
+		printf("%s\n", command);
+		pasynOctetSyncIO->writeRead(this->asyn_user, command, strlen(command), this->read_buffer, sizeof(this->read_buffer), 0.1, &bytes, &bytes_rx, &x);
+		printf("(%zu - %zu) %s", bytes, bytes_rx, read_buffer);
+		printf("Hello 2\n");
 
 		// A test to check setting values for PVs.
-		setDoubleParam(index_voltage, 50);
+		// setDoubleParam(index_voltage, 50);
 
 		unlock();
 	}
