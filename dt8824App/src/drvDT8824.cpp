@@ -1,10 +1,12 @@
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <pthread.h>
 #include <unistd.h>
 
 #include <vector>
 #include <string>
+#include <iostream>
 
 #include <epicsExport.h>
 #include <asynPortDriver.h>
@@ -14,15 +16,17 @@
 
 using std::vector;
 using std::string;
+using std::cout;
+using std::endl;
 
 #define ADMIN_LOGIN		":SYST:PASS:CEN admin\r\n"
-#define CHANNEL_ENABLE	":AD:ENABLE ON, (@%d)\r\n"
+#define CHANNEL_ENABLE	":AD:ENAB ON, (@%d)\r\n"
 #define SET_FREQUENCY	":AD:CLOC:FREQ %d\r\n"
 #define ACQ_STOP		":AD:ABOR\r\n"
 #define ACQ_ARM			":AD:ARM\r\n"
 #define ACQ_INIT		":AD:INIT\r\n"
 #define ACQ_LAST_INDEX	":AD:STAT:SCA?\r\n"
-#define ACQ_FETCH		":AD:FETCH? %d,%d"
+#define ACQ_FETCH		":AD:FETCH? %d,%d\r\n"
 
 #define P_VOLTAGE_1		"voltage_ch1"
 
@@ -33,6 +37,8 @@ public:
 	
 	void sendCommand(string cmd);
 	void sendCommand(string cmd, int value);
+	void readCommand(string cmd);
+	unsigned bytes_to_int(char* buffer);
 	void performDAQ();
 	pthread_t daq_thread;
 
@@ -123,8 +129,43 @@ void DT8824::sendCommand(string cmd, int value)
 	}
 }
 
+void DT8824::readCommand(string cmd)
+{
+	size_t bytes_rx;
+	int reason;
+	int status;
+	char command[50];
+	memset(command, 0, sizeof(command));
+	snprintf(command, sizeof(command), cmd.c_str());
+	status = pasynOctetSyncIO->write(this->asyn_user, command, strlen(command), 0, &this->bytes);
+	if(status != asynSuccess || this->bytes != strlen(command))
+	{
+		printf("ERROR: Could not write command %s\n", cmd.c_str());
+		return;
+	}
+
+	status = pasynOctetSyncIO->read(this->asyn_user, read_buffer, sizeof(read_buffer), 1, &bytes_rx, &reason);
+	if(status != asynSuccess || bytes_rx != strlen(read_buffer))
+	{
+		printf("ERROR: Could not read command %s\n", cmd.c_str());
+		return;
+	}
+}
+
+unsigned DT8824::bytes_to_int(char* buffer)
+{
+	return (buffer[0] << 24) + (buffer[1] << 16) + (buffer[2] << 8) + (buffer[3]);
+}
+
 void DT8824::performDAQ()
 {
+	size_t bytes_rx;
+	size_t bytes_tx;
+	int reason;
+	int status;
+	char raw_data[2000000];
+	char command[50];
+	string cmd;
 	while(true)
 	{
 		lock();
@@ -134,14 +175,48 @@ void DT8824::performDAQ()
 
 		epicsThreadSleep(1);
 
-		int x;
-		size_t bytes_rx;
+		readCommand(ACQ_LAST_INDEX);
+
+		cmd = ACQ_FETCH;
+		memset(raw_data, 0, sizeof(raw_data));
 		memset(command, 0, sizeof(command));
-		snprintf(command, strlen(ACQ_LAST_INDEX), "%s", ACQ_LAST_INDEX);
-		printf("%s\n", command);
-		pasynOctetSyncIO->writeRead(this->asyn_user, command, strlen(command), this->read_buffer, sizeof(this->read_buffer), 0.1, &bytes, &bytes_rx, &x);
-		printf("(%zu - %zu) %s", bytes, bytes_rx, read_buffer);
-		printf("Hello 2\n");
+		snprintf(command, sizeof(command), cmd.c_str(), 0, 10);
+		status = pasynOctetSyncIO->writeRead(this->asyn_user, command, strlen(command), raw_data, sizeof(raw_data), 1, &bytes_tx, &bytes_rx, &reason);
+		if(status != asynSuccess || bytes_tx != strlen(command))
+		{
+			printf("ERROR: Could not write command %s\n", command);
+			unlock();
+			continue;
+		}
+
+		int header;
+		int nbytes;
+		if(raw_data[1] >= 0x30 && raw_data[1] <= 0x39)
+			nbytes = raw_data[1] - 0x30;
+		else
+		{
+			printf("ERROR: Invalid bytes count\n");
+			unlock();
+			continue;
+		}
+
+		int length;
+		char buffer[50];
+		header = nbytes + 2;
+		strncpy(buffer, raw_data + 2, nbytes);
+		buffer[nbytes] = '\0';
+		length = atoi(buffer);
+		if(length <= 0)
+		{
+			printf("ERROR: Invalid data length\n");
+			unlock();
+			continue;
+		}
+
+		unsigned fsindex = bytes_to_int(raw_data + header);
+		unsigned nscans  = bytes_to_int(raw_data + header + 4);
+		unsigned spscan  = bytes_to_int(raw_data + header + 8);
+		unsigned tstamp  = bytes_to_int(raw_data + header + 12);
 
 		// A test to check setting values for PVs.
 		// setDoubleParam(index_voltage, 50);

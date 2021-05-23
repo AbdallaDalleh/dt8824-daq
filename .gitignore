@@ -30,3 +30,11 @@
 *.exe
 *.out
 *.app
+
+envPaths
+bin/
+db/
+dbd/
+O.Common
+O.linux-x86/
+O.linux-x86_64/
