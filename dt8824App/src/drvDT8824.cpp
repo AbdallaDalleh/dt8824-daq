@@ -7,6 +7,7 @@
 #include <vector>
 #include <string>
 #include <iostream>
+#include <numeric>
 
 #include <epicsExport.h>
 #include <asynPortDriver.h>
@@ -18,6 +19,7 @@ using std::vector;
 using std::string;
 using std::cout;
 using std::endl;
+using std::accumulate;
 
 #define ADMIN_LOGIN		":SYST:PASS:CEN admin\r\n"
 #define CHANNEL_ENABLE	":AD:ENAB ON, (@%d)\r\n"
@@ -51,10 +53,12 @@ private:
 	char command[50];
 
 	char read_buffer[1000000];
-	vector<int> channel_1;
-	vector<int> channel_2;
-	vector<int> channel_3;
-	vector<int> channel_4;
+	vector<double> channel_1;
+	vector<double> channel_2;
+	vector<double> channel_3;
+	vector<double> channel_4;
+	vector<double> raw;
+	vector<double> channels[4];
 };
 
 static void* start_daq_thread(void* pvt)
@@ -159,6 +163,8 @@ unsigned DT8824::bytes_to_int(char* buffer)
 
 void DT8824::performDAQ()
 {
+	int n = 10;
+	int size;
 	size_t bytes_rx;
 	size_t bytes_tx;
 	int reason;
@@ -180,7 +186,7 @@ void DT8824::performDAQ()
 		cmd = ACQ_FETCH;
 		memset(raw_data, 0, sizeof(raw_data));
 		memset(command, 0, sizeof(command));
-		snprintf(command, sizeof(command), cmd.c_str(), 0, 10);
+		snprintf(command, sizeof(command), cmd.c_str(), 0, 5);
 		status = pasynOctetSyncIO->writeRead(this->asyn_user, command, strlen(command), raw_data, sizeof(raw_data), 1, &bytes_tx, &bytes_rx, &reason);
 		if(status != asynSuccess || bytes_tx != strlen(command))
 		{
@@ -201,9 +207,9 @@ void DT8824::performDAQ()
 		}
 
 		int length;
-		char buffer[50];
+		char buffer[10];
 		header = nbytes + 2;
-		strncpy(buffer, raw_data + 2, nbytes);
+		strncpy(buffer, raw_data + 2, header - 2);
 		buffer[nbytes] = '\0';
 		length = atoi(buffer);
 		if(length <= 0)
@@ -217,6 +223,39 @@ void DT8824::performDAQ()
 		unsigned nscans  = bytes_to_int(raw_data + header + 4);
 		unsigned spscan  = bytes_to_int(raw_data + header + 8);
 		unsigned tstamp  = bytes_to_int(raw_data + header + 12);
+
+		cout << "length: " << length << endl;
+		cout << "nbytes: " << nbytes << endl;
+		cout << "index: " << fsindex << endl;
+		cout << "nscan: " << nscans << endl;
+		cout << "sscan: " << spscan << endl;
+		cout << "stamp: " << tstamp << endl;
+
+		if(raw_data[bytes_rx - 1] == '\n')
+			cout << "EOS Success!!!!" << endl;
+		else
+			cout << "EOS Failed!!!!" << endl;
+
+		channel_1.clear();
+		channel_2.clear();
+		channel_3.clear();
+		channel_4.clear();
+
+		int c = 0;
+		char* channel_data = raw_data + 28;
+		size = 4 * 4 * n;
+		for(int i = 0; i < size; i += 4)
+		{
+			// raw.push_back( 0.000001192 * bytes_to_int(channel_data + i) - 10 );
+			double xx = 0.000001192 * bytes_to_int(channel_data + i) - 10;
+			// cout << "X: " << xx << endl;
+			channels[c++ % 4].push_back(xx);
+		}
+		// cout << "Sample size: " << c << endl;
+		// cout << "Channel 1: " << channels[0][channels[0].size() - 1] << " - " << std::accumulate(channels[0].begin(), channels[0].end(), 0) / channels[0].size() << endl;
+		// cout << "Channel 2: " << channels[1][channels[1].size() - 1] << " - " << std::accumulate(channels[1].begin(), channels[1].end(), 0) / channels[1].size() << endl;
+		// cout << "Channel 3: " << channels[2][channels[2].size() - 1] << " - " << std::accumulate(channels[2].begin(), channels[2].end(), 0) / channels[2].size() << endl;
+		// cout << "Channel 4: " << channels[3][channels[3].size() - 1] << " - " << std::accumulate(channels[3].begin(), channels[3].end(), 0) / channels[3].size() << endl;
 
 		// A test to check setting values for PVs.
 		// setDoubleParam(index_voltage, 50);
@@ -251,6 +290,4 @@ void drvDT8824Register(void)
 extern "C" {
 epicsExportRegistrar(drvDT8824Register);
 }
-
-
 

@@ -6,7 +6,7 @@ dt8824_registerRecordDeviceDriver pdbbase
 dbLoadRecords("db/test.db")
 
 drvAsynIPPortConfigure("DT8824", "10.3.1.87:5025", 0, 0, 1);
-DT8824Configure("DT", "DT8824", 15, 2000)
+DT8824Configure("DT", "DT8824", 12, 2000)
 
 iocInit
 
