@@ -22,12 +22,12 @@ using std::endl;
 using std::accumulate;
 
 #define ADMIN_LOGIN		":SYST:PASS:CEN admin\r\n"
-#define CHANNEL_ENABLE	":AD:ENAB ON, (@%d)\r\n"
+#define CHANNEL_ENABLE	":AD:ENAB ON, (@1,2,3,4)\r\n"
 #define SET_FREQUENCY	":AD:CLOC:FREQ %d\r\n"
 #define ACQ_STOP		":AD:ABOR\r\n"
 #define ACQ_ARM			":AD:ARM\r\n"
 #define ACQ_INIT		":AD:INIT\r\n"
-#define ACQ_LAST_INDEX	":AD:STAT:SCA?\r\n"
+#define ACQ_LAST_INDEX	":AD:STAT:SCAN?\r\n"
 #define ACQ_FETCH		":AD:FETCH? %d,%d\r\n"
 
 #define P_VOLTAGE_1		"voltage_ch1"
@@ -40,7 +40,7 @@ public:
 	void sendCommand(string cmd);
 	void sendCommand(string cmd, int value);
 	void readCommand(string cmd);
-	unsigned bytes_to_int(char* buffer);
+	int bytes_to_int(char* buffer);
 	void performDAQ();
 	pthread_t daq_thread;
 
@@ -88,11 +88,7 @@ DT8824::DT8824(const char* port_name, const char* name, int frequency, int buffe
 	createParam(P_VOLTAGE_1, asynParamFloat64, &index_voltage);
 
 	sendCommand(ADMIN_LOGIN);
-
-	for(int i = 1; i <= 4; i++)
-	{
-		sendCommand(CHANNEL_ENABLE, i);
-	}
+	sendCommand(CHANNEL_ENABLE);
 
 	sendCommand(ACQ_STOP);
 	sendCommand(SET_FREQUENCY, frequency);
@@ -156,21 +152,29 @@ void DT8824::readCommand(string cmd)
 	}
 }
 
-unsigned DT8824::bytes_to_int(char* buffer)
+int DT8824::bytes_to_int(char* buffer)
 {
-	return (buffer[0] << 24) + (buffer[1] << 16) + (buffer[2] << 8) + (buffer[3]);
+	return ((buffer[0] << 24) & 0xff000000) + ((buffer[1] << 16) & 0xff0000) + ((buffer[2] << 8) & 0xff00) + ((buffer[3]) & 0xff);
 }
 
 void DT8824::performDAQ()
 {
-	int n = 10;
-	int size;
 	size_t bytes_rx;
 	size_t bytes_tx;
+	int n = 5;
+	int c = 0;
+	int size;
 	int reason;
 	int status;
+	int header;
+	int nbytes;
+	int length;
 	char raw_data[2000000];
 	char command[50];
+	char buffer[10];
+	unsigned fsindex, nscans, spscan, tstamp;
+	int bytes;
+	double sample;
 	string cmd;
 	while(true)
 	{
@@ -186,7 +190,7 @@ void DT8824::performDAQ()
 		cmd = ACQ_FETCH;
 		memset(raw_data, 0, sizeof(raw_data));
 		memset(command, 0, sizeof(command));
-		snprintf(command, sizeof(command), cmd.c_str(), 0, 5);
+		snprintf(command, sizeof(command), cmd.c_str(), 0, n);
 		status = pasynOctetSyncIO->writeRead(this->asyn_user, command, strlen(command), raw_data, sizeof(raw_data), 1, &bytes_tx, &bytes_rx, &reason);
 		if(status != asynSuccess || bytes_tx != strlen(command))
 		{
@@ -195,8 +199,8 @@ void DT8824::performDAQ()
 			continue;
 		}
 
-		int header;
-		int nbytes;
+		cout << "Bytes RX:" << bytes_rx << endl;
+
 		if(raw_data[1] >= 0x30 && raw_data[1] <= 0x39)
 			nbytes = raw_data[1] - 0x30;
 		else
@@ -205,11 +209,11 @@ void DT8824::performDAQ()
 			unlock();
 			continue;
 		}
+		raw_data[bytes_rx] = '\0';
 
-		int length;
-		char buffer[10];
 		header = nbytes + 2;
-		strncpy(buffer, raw_data + 2, header - 2);
+		memset(buffer, 0, sizeof(buffer));
+		strncpy(buffer, raw_data + 2, nbytes);
 		buffer[nbytes] = '\0';
 		length = atoi(buffer);
 		if(length <= 0)
@@ -219,10 +223,10 @@ void DT8824::performDAQ()
 			continue;
 		}
 
-		unsigned fsindex = bytes_to_int(raw_data + header);
-		unsigned nscans  = bytes_to_int(raw_data + header + 4);
-		unsigned spscan  = bytes_to_int(raw_data + header + 8);
-		unsigned tstamp  = bytes_to_int(raw_data + header + 12);
+		fsindex = bytes_to_int(raw_data + header);
+		nscans  = bytes_to_int(raw_data + header + 4);
+		spscan  = bytes_to_int(raw_data + header + 8);
+		tstamp  = bytes_to_int(raw_data + header + 12);
 
 		cout << "length: " << length << endl;
 		cout << "nbytes: " << nbytes << endl;
@@ -236,22 +240,24 @@ void DT8824::performDAQ()
 		else
 			cout << "EOS Failed!!!!" << endl;
 
-		channel_1.clear();
-		channel_2.clear();
-		channel_3.clear();
-		channel_4.clear();
-
-		int c = 0;
+		c = 0;
 		char* channel_data = raw_data + 28;
 		size = 4 * 4 * n;
 		for(int i = 0; i < size; i += 4)
 		{
-			// raw.push_back( 0.000001192 * bytes_to_int(channel_data + i) - 10 );
-			double xx = 0.000001192 * bytes_to_int(channel_data + i) - 10;
-			// cout << "X: " << xx << endl;
-			channels[c++ % 4].push_back(xx);
+			bytes = bytes_to_int(channel_data + i);
+			if(bytes == 0)
+				continue;
+			sample = 0.000001192 * bytes - 10;
+			// cout << "Bytes: " << bytes << endl;
+			cout << "Sample: " << sample << endl;
+			channels[c++ % 4].push_back(sample);
 		}
-		// cout << "Sample size: " << c << endl;
+		cout << "Sample size: " << c << endl;
+		cout << "Size 1: " << channels[1].size() << endl;
+		cout << "Size 2: " << channels[2].size() << endl;
+		cout << "Size 3: " << channels[3].size() << endl;
+		cout << "Size 4: " << channels[4].size() << endl;
 		// cout << "Channel 1: " << channels[0][channels[0].size() - 1] << " - " << std::accumulate(channels[0].begin(), channels[0].end(), 0) / channels[0].size() << endl;
 		// cout << "Channel 2: " << channels[1][channels[1].size() - 1] << " - " << std::accumulate(channels[1].begin(), channels[1].end(), 0) / channels[1].size() << endl;
 		// cout << "Channel 3: " << channels[2][channels[2].size() - 1] << " - " << std::accumulate(channels[2].begin(), channels[2].end(), 0) / channels[2].size() << endl;
