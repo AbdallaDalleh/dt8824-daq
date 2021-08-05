@@ -31,6 +31,15 @@ using std::accumulate;
 #define ACQ_FETCH		":AD:FETCH? %d,%d\r\n"
 
 #define P_VOLTAGE_1		"voltage_ch1"
+#define P_VOLTAGE_2		"voltage_ch2"
+#define P_VOLTAGE_3		"voltage_ch3"
+#define P_VOLTAGE_4		"voltage_ch4"
+#define P_VOLTAGE_AVG_1	"avg_voltage_ch1"
+#define P_VOLTAGE_AVG_2	"avg_voltage_ch2"
+#define P_VOLTAGE_AVG_3	"avg_voltage_ch3"
+#define P_VOLTAGE_AVG_4	"avg_voltage_ch4"
+
+#define NUMBER_OF_CHANNELS	4
 
 class DT8824 : public asynPortDriver
 {
@@ -46,12 +55,21 @@ public:
 	pthread_t daq_thread;
 
 protected:
-	int index_voltage;
+	int index_voltage_1;
+	int index_voltage_2;
+	int index_voltage_3;
+	int index_voltage_4;
+
+	int index_avg_voltage_1;
+	int index_avg_voltage_2;
+	int index_avg_voltage_3;
+	int index_avg_voltage_4;
 
 private:
 	asynUser* asyn_user;
 	vector<double> channels[4];
-	double v1;
+	double voltages[4];
+	double avg_voltages[4];
 };
 
 static void* start_daq_thread(void* pvt)
@@ -70,7 +88,7 @@ static void pollerThread(void* pvt)
 DT8824::DT8824(const char* port_name, const char* name, int frequency, int buffer_size)
 	: asynPortDriver(port_name,
 					1,
-					asynFloat64Mask,
+					asynFloat64Mask | asynDrvUserMask,
 					asynFloat64Mask,
 					ASYN_MULTIDEVICE | ASYN_CANBLOCK,
 					1, 0, 0)
@@ -85,31 +103,45 @@ DT8824::DT8824(const char* port_name, const char* name, int frequency, int buffe
 		return;
 	}
 
-	createParam(P_VOLTAGE_1, asynParamFloat64, &index_voltage);
-	setDoubleParam(index_voltage, 74.66);
+	createParam(P_VOLTAGE_1, asynParamFloat64, &index_voltage_1);
+	createParam(P_VOLTAGE_2, asynParamFloat64, &index_voltage_2);
+	createParam(P_VOLTAGE_3, asynParamFloat64, &index_voltage_3);
+	createParam(P_VOLTAGE_4, asynParamFloat64, &index_voltage_4);
+	createParam(P_VOLTAGE_AVG_1, asynParamFloat64, &index_avg_voltage_1);
+	createParam(P_VOLTAGE_AVG_2, asynParamFloat64, &index_avg_voltage_2);
+	createParam(P_VOLTAGE_AVG_3, asynParamFloat64, &index_avg_voltage_3);
+	createParam(P_VOLTAGE_AVG_4, asynParamFloat64, &index_avg_voltage_4);
 
 	sendCommand(ADMIN_LOGIN);
 	sendCommand(CHANNEL_ENABLE);
 	sendCommand(ACQ_STOP);
 	sendCommand(SET_FREQUENCY, frequency);
 
-	// if(pthread_create(&daq_thread, 0, start_daq_thread, this) != 0)
-	// {
-	// 	printf("Could not create DAQ thread for port %s\n", port_name);
-	// 	perror("pthread_create");
-	// }
+	if(pthread_create(&daq_thread, 0, start_daq_thread, this) != 0)
+	{
+		printf("Could not create DAQ thread for port %s\n", port_name);
+		perror("pthread_create");
+	}
 
-	epicsThreadCreate("DT8824_DAQ",
-                    epicsThreadPriorityLow,
-                    epicsThreadGetStackSize(epicsThreadStackBig),
-                    (EPICSTHREADFUNC)pollerThread,
-                    this);
-
+	// epicsThreadCreate("DT8824_DAQ",
+    //                 epicsThreadPriorityLow,
+    //                 epicsThreadGetStackSize(epicsThreadStackBig),
+    //                 (EPICSTHREADFUNC)pollerThread,
+    //                 this);
 }
 
 asynStatus DT8824::readFloat64(asynUser* pasynUser, epicsFloat64* value)
 {
-	*value = v1;
+	int function = pasynUser->reason;
+	if(function >= index_voltage_1 && function <= index_voltage_4)
+		*value = voltages[function];
+	else if(function >= index_avg_voltage_1 && function <= index_avg_voltage_4)
+		*value = avg_voltages[function - index_avg_voltage_1];
+	else
+	{
+		cout << "Unknown function: " << function << endl;
+		return asynError;
+	}
 	return asynSuccess;
 }
 
@@ -251,13 +283,14 @@ void DT8824::performDAQ()
 			channels[c++ % 4].push_back(sample);
 		}
 
-		// cout << "Channel 1: " << channels[0][channels[0].size() - 1] << " - " << std::accumulate(channels[0].begin(), channels[0].end(), 0) / channels[0].size() << endl;
-		// cout << "Channel 2: " << channels[1][channels[1].size() - 1] << " - " << std::accumulate(channels[1].begin(), channels[1].end(), 0) / channels[1].size() << endl;
-		// cout << "Channel 3: " << channels[2][channels[2].size() - 1] << " - " << std::accumulate(channels[2].begin(), channels[2].end(), 0) / channels[2].size() << endl;
-		// cout << "Channel 4: " << channels[3][channels[3].size() - 1] << " - " << std::accumulate(channels[3].begin(), channels[3].end(), 0) / channels[3].size() << endl;
-
-		if(!channels[0].empty())
-			v1 = channels[0][channels[0].size() - 1];
+		for(int i = 0; i < NUMBER_OF_CHANNELS; i++)
+		{
+			if(!channels[i].empty())
+			{
+				voltages[i] = channels[i][channels[i].size() - 1];
+				avg_voltages[i] = std::accumulate(channels[i].begin(), channels[i].end(), 0.0f) / channels[i].size();
+			}
+		}
 
 		unlock();
 		epicsThreadSleep(0.1);

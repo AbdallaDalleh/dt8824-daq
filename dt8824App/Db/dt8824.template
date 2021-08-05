@@ -1,0 +1,17 @@
+record(ai, "voltage_ch$(CH)")
+{
+	field(PINI, "YES")
+	field(SCAN, "1 second")
+	field(DTYP, "asynFloat64")
+	field(INP,  "@asyn(DT, 0, 0) voltage_ch$(CH)")
+	field(PREC, "6")
+}
+
+record(ai, "avg_voltage_ch$(CH)")
+{
+	field(PINI, "YES")
+	field(SCAN, "1 second")
+	field(DTYP, "asynFloat64")
+	field(INP,  "@asyn(DT, 0, 0) avg_voltage_ch$(CH)")
+	field(PREC, "6")
+}
