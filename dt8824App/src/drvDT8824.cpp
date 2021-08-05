@@ -36,6 +36,7 @@ class DT8824 : public asynPortDriver
 {
 public:
 	DT8824(const char* port_name, const char* name, int frequency, int buffer_size);
+	virtual asynStatus readFloat64(asynUser* pasynUser, epicsFloat64* value);
 	
 	void sendCommand(string cmd);
 	void sendCommand(string cmd, int value);
@@ -49,29 +50,28 @@ protected:
 
 private:
 	asynUser* asyn_user;
-	size_t bytes;
-	char command[50];
-
-	char read_buffer[1000000];
-	vector<double> channel_1;
-	vector<double> channel_2;
-	vector<double> channel_3;
-	vector<double> channel_4;
-	vector<double> raw;
 	vector<double> channels[4];
+	double v1;
 };
 
 static void* start_daq_thread(void* pvt)
 {
-	((DT8824*) pvt)->performDAQ();
+	DT8824* dt = (DT8824*) pvt;
+	dt->performDAQ();
 	return NULL;
+}
+
+static void pollerThread(void* pvt)
+{
+	DT8824* dt = (DT8824*) pvt;
+	dt->performDAQ();
 }
 
 DT8824::DT8824(const char* port_name, const char* name, int frequency, int buffer_size)
 	: asynPortDriver(port_name,
 					1,
 					asynFloat64Mask,
-					0,
+					asynFloat64Mask,
 					ASYN_MULTIDEVICE | ASYN_CANBLOCK,
 					1, 0, 0)
 {
@@ -86,29 +86,39 @@ DT8824::DT8824(const char* port_name, const char* name, int frequency, int buffe
 	}
 
 	createParam(P_VOLTAGE_1, asynParamFloat64, &index_voltage);
+	setDoubleParam(index_voltage, 74.66);
 
 	sendCommand(ADMIN_LOGIN);
 	sendCommand(CHANNEL_ENABLE);
-
 	sendCommand(ACQ_STOP);
 	sendCommand(SET_FREQUENCY, frequency);
 
-	channel_1.resize(buffer_size);
-	channel_2.resize(buffer_size);
-	channel_3.resize(buffer_size);
-	channel_4.resize(buffer_size);
-	if(pthread_create(&daq_thread, 0, start_daq_thread, this) != 0)
-	{
-		printf("Could not create DAQ thread for port %s\n", port_name);
-		perror("pthread_create");
-	}
+	// if(pthread_create(&daq_thread, 0, start_daq_thread, this) != 0)
+	// {
+	// 	printf("Could not create DAQ thread for port %s\n", port_name);
+	// 	perror("pthread_create");
+	// }
+
+	epicsThreadCreate("DT8824_DAQ",
+                    epicsThreadPriorityLow,
+                    epicsThreadGetStackSize(epicsThreadStackBig),
+                    (EPICSTHREADFUNC)pollerThread,
+                    this);
+
+}
+
+asynStatus DT8824::readFloat64(asynUser* pasynUser, epicsFloat64* value)
+{
+	*value = v1;
+	return asynSuccess;
 }
 
 void DT8824::sendCommand(string cmd)
 {
 	int status;
-	status = pasynOctetSyncIO->write(this->asyn_user, cmd.c_str(), cmd.length(), 1, &this->bytes);
-	if(status != asynSuccess || this->bytes != cmd.length())
+	size_t bytes;
+	status = pasynOctetSyncIO->write(this->asyn_user, cmd.c_str(), cmd.length(), 1, &bytes);
+	if(status != asynSuccess || bytes != cmd.length())
 	{
 		printf("ERROR: Could not send command %s\n", cmd.c_str());
 		return;
@@ -119,10 +129,12 @@ void DT8824::sendCommand(string cmd, int value)
 {
 	int status;
 	char command[50];
+	size_t bytes;
+
 	memset(command, 0, sizeof(command));
 	snprintf(command, sizeof(command), cmd.c_str(), value);
-	status = pasynOctetSyncIO->write(this->asyn_user, command, strlen(command), 1, &this->bytes);
-	if(status != asynSuccess || this->bytes != strlen(command))
+	status = pasynOctetSyncIO->write(this->asyn_user, command, strlen(command), 1, &bytes);
+	if(status != asynSuccess || bytes != strlen(command))
 	{
 		printf("ERROR: Could not send command %s\n", cmd.c_str());
 		return;
@@ -132,22 +144,18 @@ void DT8824::sendCommand(string cmd, int value)
 void DT8824::readCommand(string cmd)
 {
 	size_t bytes_rx;
+	size_t bytes_tx;
 	int reason;
 	int status;
 	char command[50];
+	char read_buffer[100];
+
 	memset(command, 0, sizeof(command));
 	snprintf(command, sizeof(command), cmd.c_str());
-	status = pasynOctetSyncIO->write(this->asyn_user, command, strlen(command), 0, &this->bytes);
-	if(status != asynSuccess || this->bytes != strlen(command))
+	status = pasynOctetSyncIO->writeRead(this->asyn_user, command, strlen(command), read_buffer, sizeof(read_buffer), 1, &bytes_tx, &bytes_rx, &reason);
+	if(status != asynSuccess || bytes_tx != strlen(command) || bytes_rx != strlen(read_buffer))
 	{
 		printf("ERROR: Could not write command %s\n", cmd.c_str());
-		return;
-	}
-
-	status = pasynOctetSyncIO->read(this->asyn_user, read_buffer, sizeof(read_buffer), 1, &bytes_rx, &reason);
-	if(status != asynSuccess || bytes_rx != strlen(read_buffer))
-	{
-		printf("ERROR: Could not read command %s\n", cmd.c_str());
 		return;
 	}
 }
@@ -166,16 +174,15 @@ void DT8824::performDAQ()
 	int size;
 	int reason;
 	int status;
-	int header;
 	int nbytes;
 	int length;
-	char raw_data[2000000];
+	char raw_data[2000];
 	char command[50];
 	char buffer[10];
-	unsigned fsindex, nscans, spscan, tstamp;
+	// int header;
+	// unsigned fsindex, nscans, spscan, tstamp;
 	int bytes;
 	double sample;
-	string cmd;
 	while(true)
 	{
 		lock();
@@ -187,10 +194,9 @@ void DT8824::performDAQ()
 
 		readCommand(ACQ_LAST_INDEX);
 
-		cmd = ACQ_FETCH;
 		memset(raw_data, 0, sizeof(raw_data));
 		memset(command, 0, sizeof(command));
-		snprintf(command, sizeof(command), cmd.c_str(), 0, n);
+		snprintf(command, sizeof(command), ACQ_FETCH, 0, n);
 		status = pasynOctetSyncIO->writeRead(this->asyn_user, command, strlen(command), raw_data, sizeof(raw_data), 1, &bytes_tx, &bytes_rx, &reason);
 		if(status != asynSuccess || bytes_tx != strlen(command))
 		{
@@ -198,8 +204,7 @@ void DT8824::performDAQ()
 			unlock();
 			continue;
 		}
-
-		cout << "Bytes RX:" << bytes_rx << endl;
+		raw_data[bytes_rx] = '\0';
 
 		if(raw_data[1] >= 0x30 && raw_data[1] <= 0x39)
 			nbytes = raw_data[1] - 0x30;
@@ -209,9 +214,7 @@ void DT8824::performDAQ()
 			unlock();
 			continue;
 		}
-		raw_data[bytes_rx] = '\0';
 
-		header = nbytes + 2;
 		memset(buffer, 0, sizeof(buffer));
 		strncpy(buffer, raw_data + 2, nbytes);
 		buffer[nbytes] = '\0';
@@ -223,22 +226,18 @@ void DT8824::performDAQ()
 			continue;
 		}
 
-		fsindex = bytes_to_int(raw_data + header);
-		nscans  = bytes_to_int(raw_data + header + 4);
-		spscan  = bytes_to_int(raw_data + header + 8);
-		tstamp  = bytes_to_int(raw_data + header + 12);
+		// header = nbytes + 2;
+		// fsindex = bytes_to_int(raw_data + header);
+		// nscans  = bytes_to_int(raw_data + header + 4);
+		// spscan  = bytes_to_int(raw_data + header + 8);
+		// tstamp  = bytes_to_int(raw_data + header + 12);
 
-		cout << "length: " << length << endl;
-		cout << "nbytes: " << nbytes << endl;
-		cout << "index: " << fsindex << endl;
-		cout << "nscan: " << nscans << endl;
-		cout << "sscan: " << spscan << endl;
-		cout << "stamp: " << tstamp << endl;
-
-		if(raw_data[bytes_rx - 1] == '\n')
-			cout << "EOS Success!!!!" << endl;
-		else
-			cout << "EOS Failed!!!!" << endl;
+		if(raw_data[bytes_rx - 1] != '\n')
+		{
+			cout << "EOS Error" << endl;
+			unlock();
+			continue;
+		}		
 
 		c = 0;
 		char* channel_data = raw_data + 28;
@@ -249,24 +248,19 @@ void DT8824::performDAQ()
 			if(bytes == 0)
 				continue;
 			sample = 0.000001192 * bytes - 10;
-			// cout << "Bytes: " << bytes << endl;
-			cout << "Sample: " << sample << endl;
 			channels[c++ % 4].push_back(sample);
 		}
-		cout << "Sample size: " << c << endl;
-		cout << "Size 1: " << channels[1].size() << endl;
-		cout << "Size 2: " << channels[2].size() << endl;
-		cout << "Size 3: " << channels[3].size() << endl;
-		cout << "Size 4: " << channels[4].size() << endl;
+
 		// cout << "Channel 1: " << channels[0][channels[0].size() - 1] << " - " << std::accumulate(channels[0].begin(), channels[0].end(), 0) / channels[0].size() << endl;
 		// cout << "Channel 2: " << channels[1][channels[1].size() - 1] << " - " << std::accumulate(channels[1].begin(), channels[1].end(), 0) / channels[1].size() << endl;
 		// cout << "Channel 3: " << channels[2][channels[2].size() - 1] << " - " << std::accumulate(channels[2].begin(), channels[2].end(), 0) / channels[2].size() << endl;
 		// cout << "Channel 4: " << channels[3][channels[3].size() - 1] << " - " << std::accumulate(channels[3].begin(), channels[3].end(), 0) / channels[3].size() << endl;
 
-		// A test to check setting values for PVs.
-		// setDoubleParam(index_voltage, 50);
+		if(!channels[0].empty())
+			v1 = channels[0][channels[0].size() - 1];
 
 		unlock();
+		epicsThreadSleep(0.1);
 	}
 }
 

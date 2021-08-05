@@ -1,7 +1,8 @@
-record(ai, "Read:Voltage")
+record(ai, "voltage_1")
 {
 	field(PINI, "YES")
 	field(SCAN, "1 second")
 	field(DTYP, "asynFloat64")
 	field(INP,  "@asyn(DT, 0, 0) voltage_ch1")
+	field(PREC, "6")
 }
