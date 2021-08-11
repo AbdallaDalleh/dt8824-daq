@@ -15,3 +15,22 @@ record(ai, "avg_voltage_ch$(CH)")
 	field(INP,  "@asyn(DT, 0, 0) avg_voltage_ch$(CH)")
 	field(PREC, "6")
 }
+
+record(ai, "frequency")
+{
+    field(PINI, "YES")
+    field(SCAN, "Passive")
+    field(EGU,  "Hz")
+    field(PREC, "6")
+    field(DTYP, "asynFloat64")
+    field(INP,  "@asyn(DT, 0, 0) frequency")
+}
+
+record(longout, "set-frequency")
+{
+    field(PINI, "NO")
+    field(EGU,  "Hz")
+    field(DTYP, "asynInt32")
+    field(OUT,  "@asyn(DT, 0, 0) frequency")
+    field(FLNK, "frequency")
+}

@@ -23,7 +23,8 @@ using std::accumulate;
 
 #define ADMIN_LOGIN		":SYST:PASS:CEN admin\r\n"
 #define CHANNEL_ENABLE	":AD:ENAB ON, (@1,2,3,4)\r\n"
-#define SET_FREQUENCY	":AD:CLOC:FREQ %d\r\n"
+#define FREQUENCY_SET	":AD:CLOC:FREQ %d\r\n"
+#define FREQUENCY_GET	":AD:CLOCK:FREQ?\r\n"
 #define ACQ_STOP		":AD:ABOR\r\n"
 #define ACQ_ARM			":AD:ARM\r\n"
 #define ACQ_INIT		":AD:INIT\r\n"
@@ -38,17 +39,21 @@ using std::accumulate;
 #define P_VOLTAGE_AVG_2	"avg_voltage_ch2"
 #define P_VOLTAGE_AVG_3	"avg_voltage_ch3"
 #define P_VOLTAGE_AVG_4	"avg_voltage_ch4"
+#define P_FREQUENCY		"frequency"
 
 #define NUMBER_OF_CHANNELS	4
+#define MIN_RX_BYTES		45
+#define MIN_DATA_LENGTH		36
 
 class DT8824 : public asynPortDriver
 {
 public:
 	DT8824(const char* port_name, const char* name, int frequency, int buffer_size);
 	virtual asynStatus readFloat64(asynUser* pasynUser, epicsFloat64* value);
+	virtual asynStatus writeInt32(asynUser* pasynUser, epicsInt32 value);
 
 	void sendCommand(string cmd, int* value);
-	void readCommand(string cmd);
+	void readCommand(string cmd, char* buffer);
 	void performDAQ();
 	int  bytes_to_int(char* buffer);
 
@@ -63,6 +68,8 @@ protected:
 	int index_avg_voltage_3;
 	int index_avg_voltage_4;
 
+	int index_frequency;
+
 private:
 	asynUser* asyn_user;
 
@@ -70,7 +77,7 @@ private:
 	double voltages[4];
 	double avg_voltages[4];
 	pthread_t daq_thread;
-	int max_buffer_size;
+	size_t max_buffer_size;
 };
 
 static void* start_daq_thread(void* pvt)
@@ -83,8 +90,8 @@ static void* start_daq_thread(void* pvt)
 DT8824::DT8824(const char* port_name, const char* name, int frequency, int buffer_size)
 	: asynPortDriver(port_name,
 					1,
-					asynFloat64Mask | asynDrvUserMask,
-					asynFloat64Mask,
+					asynFloat64Mask | asynInt32Mask | asynDrvUserMask,
+					asynFloat64Mask | asynInt32Mask,
 					ASYN_MULTIDEVICE | ASYN_CANBLOCK,
 					1, 0, 0)
 {
@@ -106,11 +113,12 @@ DT8824::DT8824(const char* port_name, const char* name, int frequency, int buffe
 	createParam(P_VOLTAGE_AVG_2, asynParamFloat64, &index_avg_voltage_2);
 	createParam(P_VOLTAGE_AVG_3, asynParamFloat64, &index_avg_voltage_3);
 	createParam(P_VOLTAGE_AVG_4, asynParamFloat64, &index_avg_voltage_4);
+	createParam(P_FREQUENCY,     asynParamInt32, &index_frequency);
 
 	sendCommand(ADMIN_LOGIN, NULL);
 	sendCommand(CHANNEL_ENABLE, NULL);
 	sendCommand(ACQ_STOP, NULL);
-	sendCommand(SET_FREQUENCY, &frequency);
+	sendCommand(FREQUENCY_SET, &frequency);
 
 	if(pthread_create(&daq_thread, 0, start_daq_thread, this) != 0)
 	{
@@ -122,16 +130,42 @@ DT8824::DT8824(const char* port_name, const char* name, int frequency, int buffe
 
 asynStatus DT8824::readFloat64(asynUser* pasynUser, epicsFloat64* value)
 {
+	char buffer[100];
 	int function = pasynUser->reason;
+	
 	if(function >= index_voltage_1 && function <= index_voltage_4)
 		*value = voltages[function];
 	else if(function >= index_avg_voltage_1 && function <= index_avg_voltage_4)
 		*value = avg_voltages[function - index_avg_voltage_1];
+	else if(function == index_frequency)
+	{
+		readCommand(FREQUENCY_GET, buffer);
+		if(buffer == NULL)
+		{
+			cout << "Could not read frequency" << endl;
+			return asynError;
+		}
+
+		*value = atof(buffer);
+	}
 	else
 	{
 		cout << "Unknown function: " << function << endl;
 		return asynError;
 	}
+	return asynSuccess;
+}
+
+asynStatus DT8824::writeInt32(asynUser* pasynUser, epicsInt32 value)
+{
+	int function = pasynUser->reason;
+	if(function == index_frequency)
+	{
+		sendCommand(ACQ_STOP, NULL);
+		int v = value;
+		sendCommand(FREQUENCY_SET, &v);
+	}
+
 	return asynSuccess;
 }
 
@@ -143,7 +177,7 @@ void DT8824::sendCommand(string cmd, int* value)
 
 	memset(command, 0, sizeof(command));
 	if(value != NULL)
-		snprintf(command, sizeof(command), cmd.c_str(), value);
+		snprintf(command, sizeof(command), cmd.c_str(), *value);
 	else
 		snprintf(command, sizeof(command), cmd.c_str());
 	status = pasynOctetSyncIO->write(this->asyn_user, command, strlen(command), 1, &bytes);
@@ -154,7 +188,7 @@ void DT8824::sendCommand(string cmd, int* value)
 	}
 }
 
-void DT8824::readCommand(string cmd)
+void DT8824::readCommand(string cmd, char* buffer)
 {
 	size_t bytes_rx;
 	size_t bytes_tx;
@@ -168,9 +202,12 @@ void DT8824::readCommand(string cmd)
 	status = pasynOctetSyncIO->writeRead(this->asyn_user, command, strlen(command), read_buffer, sizeof(read_buffer), 1, &bytes_tx, &bytes_rx, &reason);
 	if(status != asynSuccess || bytes_tx != strlen(command) || bytes_rx != strlen(read_buffer))
 	{
-		printf("ERROR: Could not write command %s\n", cmd.c_str());
+		buffer = NULL;
 		return;
 	}
+
+	read_buffer[bytes_rx] = '\0';
+	memcpy(buffer, read_buffer, bytes_rx);
 }
 
 int DT8824::bytes_to_int(char* buffer)
@@ -201,24 +238,23 @@ void DT8824::performDAQ()
 		sendCommand(ACQ_STOP, NULL);
 		sendCommand(ACQ_ARM, NULL);
 		sendCommand(ACQ_INIT, NULL);
-		unlock();
 
 		epicsThreadSleep(1);
 
-		lock();
 		memset(raw_data, 0, sizeof(raw_data));
 		memset(command, 0, sizeof(command));
 		snprintf(command, sizeof(command), ACQ_FETCH, 0, n);
 		status = pasynOctetSyncIO->writeRead(this->asyn_user, command, strlen(command), raw_data, sizeof(raw_data), 1, &bytes_tx, &bytes_rx, &reason);
-		if(status != asynSuccess || bytes_tx != strlen(command))
+		if(status != asynSuccess || bytes_tx != strlen(command) || bytes_rx < MIN_RX_BYTES)
 		{
 			printf("ERROR: Could not write command %s\n", command);
 			unlock();
 			continue;
 		}
+
 		raw_data[bytes_rx] = '\0';
-		cout << "RX: " << bytes_rx << endl;
-		cout << "Raw: " << raw_data << endl;
+		// cout << "RX: " << bytes_rx << endl;
+		// cout << "Raw: " << raw_data << endl;
 
 		if(isdigit(raw_data[1]))
 			nbytes = raw_data[1] - 0x30;
@@ -233,13 +269,12 @@ void DT8824::performDAQ()
 		strncpy(buffer, raw_data + 2, nbytes);
 		buffer[nbytes] = '\0';
 		length = atoi(buffer);
-		if(length <= 0)
+		if(length < MIN_DATA_LENGTH)
 		{
 			printf("ERROR: Invalid data length\n");
 			unlock();
 			continue;
 		}
-		cout << "Length: " << length << endl;
 
 		if(raw_data[bytes_rx - 1] != '\n')
 		{
@@ -262,7 +297,6 @@ void DT8824::performDAQ()
 				channels[c % 4].erase(channels[c % 4].begin());
 			channels[c % 4].push_back(sample);
 		}
-		cout << channels[0].size() << endl;
 
 		for(int i = 0; i < NUMBER_OF_CHANNELS; i++)
 		{
@@ -272,8 +306,9 @@ void DT8824::performDAQ()
 				avg_voltages[i] = std::accumulate(channels[i].begin(), channels[i].end(), 0.0f) / channels[i].size();
 			}
 		}
+
 		unlock();
-		// epicsThreadSleep(0.1);
+		epicsThreadSleep(0.1);
 	}
 }
 
