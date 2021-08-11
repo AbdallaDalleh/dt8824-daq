@@ -78,6 +78,7 @@ private:
 	double avg_voltages[4];
 	pthread_t daq_thread;
 	size_t max_buffer_size;
+	bool frequency_changed;
 };
 
 static void* start_daq_thread(void* pvt)
@@ -126,6 +127,7 @@ DT8824::DT8824(const char* port_name, const char* name, int frequency, int buffe
 		perror("pthread_create");
 	}
 	this->max_buffer_size = buffer_size;
+	this->frequency_changed = false;
 }
 
 asynStatus DT8824::readFloat64(asynUser* pasynUser, epicsFloat64* value)
@@ -164,6 +166,7 @@ asynStatus DT8824::writeInt32(asynUser* pasynUser, epicsInt32 value)
 		sendCommand(ACQ_STOP, NULL);
 		int v = value;
 		sendCommand(FREQUENCY_SET, &v);
+		frequency_changed = true;
 	}
 
 	return asynSuccess;
@@ -238,9 +241,17 @@ void DT8824::performDAQ()
 		sendCommand(ACQ_STOP, NULL);
 		sendCommand(ACQ_ARM, NULL);
 		sendCommand(ACQ_INIT, NULL);
+		unlock();
 
 		epicsThreadSleep(1);
 
+		if (frequency_changed)
+		{
+			frequency_changed = false;
+			continue;
+		}
+
+		lock();
 		memset(raw_data, 0, sizeof(raw_data));
 		memset(command, 0, sizeof(command));
 		snprintf(command, sizeof(command), ACQ_FETCH, 0, n);
@@ -253,9 +264,6 @@ void DT8824::performDAQ()
 		}
 
 		raw_data[bytes_rx] = '\0';
-		// cout << "RX: " << bytes_rx << endl;
-		// cout << "Raw: " << raw_data << endl;
-
 		if(isdigit(raw_data[1]))
 			nbytes = raw_data[1] - 0x30;
 		else
