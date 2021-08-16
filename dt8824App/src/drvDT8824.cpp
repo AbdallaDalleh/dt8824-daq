@@ -44,6 +44,7 @@ using std::accumulate;
 #define NUMBER_OF_CHANNELS	4
 #define MIN_RX_BYTES		45
 #define MIN_DATA_LENGTH		36
+#define EMPTY_SCAN_LENGTH	25
 
 class DT8824 : public asynPortDriver
 {
@@ -243,7 +244,7 @@ void DT8824::performDAQ()
 		sendCommand(ACQ_INIT, NULL);
 		unlock();
 
-		epicsThreadSleep(1);
+		epicsThreadSleep(2);
 
 		if (frequency_changed)
 		{
@@ -256,9 +257,16 @@ void DT8824::performDAQ()
 		memset(command, 0, sizeof(command));
 		snprintf(command, sizeof(command), ACQ_FETCH, 0, n);
 		status = pasynOctetSyncIO->writeRead(this->asyn_user, command, strlen(command), raw_data, sizeof(raw_data), 1, &bytes_tx, &bytes_rx, &reason);
-		if(status != asynSuccess || bytes_tx != strlen(command) || bytes_rx < MIN_RX_BYTES)
+		if(status != asynSuccess || bytes_tx != strlen(command) || (bytes_rx < MIN_RX_BYTES && bytes_rx != EMPTY_SCAN_LENGTH))
 		{
 			printf("ERROR: Could not write command %s\n", command);
+			unlock();
+			continue;
+		}
+
+		if(bytes_rx == EMPTY_SCAN_LENGTH)
+		{
+			cout << "Empty scan record received." << endl;
 			unlock();
 			continue;
 		}
