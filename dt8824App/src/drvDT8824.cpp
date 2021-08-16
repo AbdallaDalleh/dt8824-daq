@@ -327,13 +327,14 @@ void DT8824::performDAQ()
 		{
 			if(!channels[i].empty())
 			{
-				voltages[i] = channels[i][channels[i].size() - 1];
+				// voltages[i] = channels[i][channels[i].size() - 1];
+				voltages[i] = channels[i].back();
 				avg_voltages[i] = std::accumulate(channels[i].begin(), channels[i].end(), 0.0f) / channels[i].size();
 			}
 		}
 
 		unlock();
-		epicsThreadSleep(0.1);
+		// epicsThreadSleep(0.1);
 	}
 }
 
