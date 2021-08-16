@@ -40,6 +40,7 @@ using std::accumulate;
 #define P_VOLTAGE_AVG_3	"avg_voltage_ch3"
 #define P_VOLTAGE_AVG_4	"avg_voltage_ch4"
 #define P_FREQUENCY		"frequency"
+#define P_AVERAGE_TIME	"average_time"
 
 #define NUMBER_OF_CHANNELS	4
 #define MIN_RX_BYTES		45
@@ -70,6 +71,7 @@ protected:
 	int index_avg_voltage_4;
 
 	int index_frequency;
+	int index_average_time;
 
 private:
 	asynUser* asyn_user;
@@ -80,6 +82,7 @@ private:
 	pthread_t daq_thread;
 	size_t max_buffer_size;
 	bool frequency_changed;
+	int average_time;
 };
 
 static void* start_daq_thread(void* pvt)
@@ -116,6 +119,7 @@ DT8824::DT8824(const char* port_name, const char* name, int frequency, int buffe
 	createParam(P_VOLTAGE_AVG_3, asynParamFloat64, &index_avg_voltage_3);
 	createParam(P_VOLTAGE_AVG_4, asynParamFloat64, &index_avg_voltage_4);
 	createParam(P_FREQUENCY,     asynParamInt32, &index_frequency);
+	createParam(P_AVERAGE_TIME, asynParamInt32, &index_average_time);
 
 	sendCommand(ADMIN_LOGIN, NULL);
 	sendCommand(CHANNEL_ENABLE, NULL);
@@ -129,6 +133,7 @@ DT8824::DT8824(const char* port_name, const char* name, int frequency, int buffe
 	}
 	this->max_buffer_size = buffer_size;
 	this->frequency_changed = false;
+	this->average_time = 1;
 }
 
 asynStatus DT8824::readFloat64(asynUser* pasynUser, epicsFloat64* value)
@@ -168,6 +173,10 @@ asynStatus DT8824::writeInt32(asynUser* pasynUser, epicsInt32 value)
 		int v = value;
 		sendCommand(FREQUENCY_SET, &v);
 		frequency_changed = true;
+	}
+	else if(function == index_average_time)
+	{
+		this->average_time = value;
 	}
 
 	return asynSuccess;
@@ -244,7 +253,7 @@ void DT8824::performDAQ()
 		sendCommand(ACQ_INIT, NULL);
 		unlock();
 
-		epicsThreadSleep(2);
+		epicsThreadSleep(this->average_time);
 
 		if (frequency_changed)
 		{

@@ -34,3 +34,12 @@ record(longout, "set-frequency")
     field(OUT,  "@asyn(DT, 0, 0) frequency")
     field(FLNK, "frequency")
 }
+
+record(longout, "avg_time")
+{
+    field(PINI, "YES")
+    field(VAL,  "1")
+    field(EGU,  "s")
+    field(DTYP, "asynInt32")
+    field(OUT,  "@asyn(DT, 0, 0) average_time")
+}
