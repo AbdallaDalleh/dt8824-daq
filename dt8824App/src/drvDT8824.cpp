@@ -30,6 +30,7 @@ using std::accumulate;
 #define ACQ_INIT		":AD:INIT\r\n"
 #define ACQ_LAST_INDEX	":AD:STAT:SCAN?\r\n"
 #define ACQ_FETCH		":AD:FETCH? %d,%d\r\n"
+#define SYSTEM_ERROR	":SYSTEM:ERROR?\r\n"
 
 #define P_VOLTAGE_1		"voltage_ch1"
 #define P_VOLTAGE_2		"voltage_ch2"
@@ -41,6 +42,7 @@ using std::accumulate;
 #define P_VOLTAGE_AVG_4	"avg_voltage_ch4"
 #define P_FREQUENCY		"frequency"
 #define P_AVERAGE_TIME	"average_time"
+#define P_ERROR			"error"
 
 #define NUMBER_OF_CHANNELS	4
 #define MIN_RX_BYTES		45
@@ -53,6 +55,7 @@ public:
 	DT8824(const char* port_name, const char* name, int frequency, int buffer_size);
 	virtual asynStatus readFloat64(asynUser* pasynUser, epicsFloat64* value);
 	virtual asynStatus writeInt32(asynUser* pasynUser, epicsInt32 value);
+	virtual asynStatus readOctet(asynUser *pasynUser, char *value, size_t maxChars, size_t *nActual, int *eomReason);
 
 	void sendCommand(string cmd, int* value);
 	void readCommand(string cmd, char* buffer);
@@ -72,6 +75,7 @@ protected:
 
 	int index_frequency;
 	int index_average_time;
+	int index_error;
 
 private:
 	asynUser* asyn_user;
@@ -95,8 +99,8 @@ static void* start_daq_thread(void* pvt)
 DT8824::DT8824(const char* port_name, const char* name, int frequency, int buffer_size)
 	: asynPortDriver(port_name,
 					1,
-					asynFloat64Mask | asynInt32Mask | asynDrvUserMask,
-					asynFloat64Mask | asynInt32Mask,
+					asynFloat64Mask | asynInt32Mask | asynOctetMask | asynDrvUserMask,
+					asynFloat64Mask | asynInt32Mask | asynOctetMask,
 					ASYN_MULTIDEVICE | ASYN_CANBLOCK,
 					1, 0, 0)
 {
@@ -120,6 +124,7 @@ DT8824::DT8824(const char* port_name, const char* name, int frequency, int buffe
 	createParam(P_VOLTAGE_AVG_4, asynParamFloat64, &index_avg_voltage_4);
 	createParam(P_FREQUENCY,     asynParamInt32, &index_frequency);
 	createParam(P_AVERAGE_TIME, asynParamInt32, &index_average_time);
+	createParam(P_ERROR, asynParamOctet, &index_error);
 
 	sendCommand(ADMIN_LOGIN, NULL);
 	sendCommand(CHANNEL_ENABLE, NULL);
@@ -179,6 +184,32 @@ asynStatus DT8824::writeInt32(asynUser* pasynUser, epicsInt32 value)
 		this->average_time = value;
 	}
 
+	return asynSuccess;
+}
+
+asynStatus DT8824::readOctet(asynUser *pasynUser, char *value, size_t maxChars, size_t *nActual, int *eomReason)
+{
+	char buffer[100];
+	char* q;
+	int function = pasynUser->reason;
+	if(function == index_error)
+	{
+		memset(buffer, 0, sizeof(buffer));
+		readCommand(SYSTEM_ERROR, buffer);
+		if(buffer == NULL)
+			return asynError;
+		
+		*nActual = strlen(buffer);
+		*eomReason = ASYN_EOM_EOS;
+		size_t i = 0;
+		for(i = 0; i < strlen(buffer); i++)
+		{
+			if(buffer[i] == '\"')
+				buffer[i] = ' ';
+		}
+		buffer[*nActual - 2] = '\0';
+		memcpy(value, buffer, *nActual);
+	}
 	return asynSuccess;
 }
 

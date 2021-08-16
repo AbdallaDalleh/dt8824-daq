@@ -43,3 +43,11 @@ record(longout, "avg_time")
     field(DTYP, "asynInt32")
     field(OUT,  "@asyn(DT, 0, 0) average_time")
 }
+
+record(stringin, "error") {
+    field(DESC, "System error string")
+    field(PINI, "YES")
+    field(SCAN, "1 second")
+    field(DTYP, "asynOctetRead")
+    field(INP,  "@asyn(DT, 0, 0) error")
+}
