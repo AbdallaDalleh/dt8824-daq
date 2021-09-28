@@ -32,14 +32,14 @@ using std::accumulate;
 #define ACQ_FETCH		":AD:FETCH? %d,%d\r\n"
 #define SYSTEM_ERROR	":SYSTEM:ERROR?\r\n"
 
-#define P_VOLTAGE_1		"voltage_ch1"
-#define P_VOLTAGE_2		"voltage_ch2"
-#define P_VOLTAGE_3		"voltage_ch3"
-#define P_VOLTAGE_4		"voltage_ch4"
-#define P_VOLTAGE_AVG_1	"avg_voltage_ch1"
-#define P_VOLTAGE_AVG_2	"avg_voltage_ch2"
-#define P_VOLTAGE_AVG_3	"avg_voltage_ch3"
-#define P_VOLTAGE_AVG_4	"avg_voltage_ch4"
+#define P_VOLTAGE_1		"voltage_ch0"
+#define P_VOLTAGE_2		"voltage_ch1"
+#define P_VOLTAGE_3		"voltage_ch2"
+#define P_VOLTAGE_4		"voltage_ch3"
+#define P_VOLTAGE_AVG_1	"avg_voltage_ch0"
+#define P_VOLTAGE_AVG_2	"avg_voltage_ch1"
+#define P_VOLTAGE_AVG_3	"avg_voltage_ch2"
+#define P_VOLTAGE_AVG_4	"avg_voltage_ch3"
 #define P_FREQUENCY		"frequency"
 #define P_AVERAGE_TIME	"average_time"
 #define P_ERROR			"error"
@@ -190,7 +190,6 @@ asynStatus DT8824::writeInt32(asynUser* pasynUser, epicsInt32 value)
 asynStatus DT8824::readOctet(asynUser *pasynUser, char *value, size_t maxChars, size_t *nActual, int *eomReason)
 {
 	char buffer[100];
-	char* q;
 	int function = pasynUser->reason;
 	if(function == index_error)
 	{
@@ -342,30 +341,33 @@ void DT8824::performDAQ()
 		c = 0;
 		channel_data = raw_data + 28;
 		size = 4 * 4 * n;
+		channels[0].clear();
+		channels[1].clear();
+		channels[2].clear();
+		channels[3].clear();
 		for(int i = 0; i < size && i < bytes_rx - 29; i += 4)
 		{
 			bytes = bytes_to_int(channel_data + i);
 			if(bytes == 0)
 				continue;
 			sample = 0.000001192 * bytes - 10;
-			c++;
 			if(channels[c % 4].size() == this->max_buffer_size)
 				channels[c % 4].erase(channels[c % 4].begin());
 			channels[c % 4].push_back(sample);
+			c++;
 		}
 
 		for(int i = 0; i < NUMBER_OF_CHANNELS; i++)
 		{
 			if(!channels[i].empty())
 			{
-				// voltages[i] = channels[i][channels[i].size() - 1];
-				voltages[i] = channels[i].back();
+				voltages[i] = channels[i][channels[i].size() - 1];
 				avg_voltages[i] = std::accumulate(channels[i].begin(), channels[i].end(), 0.0f) / channels[i].size();
 			}
 		}
 
 		unlock();
-		// epicsThreadSleep(0.1);
+		epicsThreadSleep(0.1);
 	}
 }
 

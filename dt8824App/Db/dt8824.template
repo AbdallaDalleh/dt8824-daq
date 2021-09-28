@@ -1,4 +1,4 @@
-record(ai, "voltage_ch$(CH)")
+record(ai, "D08-ES-IC$(CH):getVoltage")
 {
 	field(PINI, "YES")
 	field(SCAN, "1 second")
@@ -7,7 +7,7 @@ record(ai, "voltage_ch$(CH)")
 	field(PREC, "6")
 }
 
-record(ai, "avg_voltage_ch$(CH)")
+record(ai, "D08-ES-IC$(CH):getAverageVoltage")
 {
 	field(PINI, "YES")
 	field(SCAN, "1 second")
@@ -16,7 +16,7 @@ record(ai, "avg_voltage_ch$(CH)")
 	field(PREC, "6")
 }
 
-record(ai, "frequency")
+record(ai, "D08-ES-DAQ:getFrequency")
 {
     field(PINI, "YES")
     field(SCAN, "Passive")
@@ -26,16 +26,16 @@ record(ai, "frequency")
     field(INP,  "@asyn(DT, 0, 0) frequency")
 }
 
-record(longout, "set-frequency")
+record(longout, "D08-ES-DAQ:setFrequency")
 {
     field(PINI, "NO")
     field(EGU,  "Hz")
     field(DTYP, "asynInt32")
     field(OUT,  "@asyn(DT, 0, 0) frequency")
-    field(FLNK, "frequency")
+    field(FLNK, "D08-ES-DAQ:getFrequency")
 }
 
-record(longout, "avg_time")
+record(longout, "D08-ES-DAQ:setAveragingTime")
 {
     field(PINI, "YES")
     field(VAL,  "1")
@@ -44,7 +44,7 @@ record(longout, "avg_time")
     field(OUT,  "@asyn(DT, 0, 0) average_time")
 }
 
-record(stringin, "error") {
+record(stringin, "D08-ES-DAQ:getError") {
     field(DESC, "System error string")
     field(PINI, "YES")
     field(SCAN, "1 second")
