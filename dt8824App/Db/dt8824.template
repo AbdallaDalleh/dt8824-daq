@@ -14,6 +14,7 @@ record(ai, "D08-ES-IC$(CH):getAverageVoltage")
 	field(DTYP, "asynFloat64")
 	field(INP,  "@asyn(DT, 0, 0) avg_voltage_ch$(CH)")
 	field(PREC, "6")
+    field(SCAN, "1 second")
 }
 
 record(ai, "D08-ES-DAQ:getFrequency")

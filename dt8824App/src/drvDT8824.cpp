@@ -60,6 +60,7 @@ public:
 	void sendCommand(string cmd, int* value);
 	void readCommand(string cmd, char* buffer);
 	void performDAQ();
+	void performAveraging();
 	int  bytes_to_int(char* buffer);
 
 protected:
@@ -84,6 +85,7 @@ private:
 	double voltages[4];
 	double avg_voltages[4];
 	pthread_t daq_thread;
+	pthread_t averaging_thread;
 	size_t max_buffer_size;
 	bool frequency_changed;
 	int average_time;
@@ -93,6 +95,13 @@ static void* start_daq_thread(void* pvt)
 {
 	DT8824* dt = (DT8824*) pvt;
 	dt->performDAQ();
+	return NULL;
+}
+
+static void* start_averaging_thread(void* pvt)
+{
+	DT8824* dt = (DT8824*) pvt;
+	dt->performAveraging();
 	return NULL;
 }
 
@@ -134,6 +143,11 @@ DT8824::DT8824(const char* port_name, const char* name, int frequency, int buffe
 	if(pthread_create(&daq_thread, 0, start_daq_thread, this) != 0)
 	{
 		printf("Could not create DAQ thread for port %s\n", port_name);
+		perror("pthread_create");
+	}
+	if(pthread_create(&averaging_thread, 0, start_averaging_thread, this) != 0)
+	{
+		printf("Could not create Averaging thread for port %s\n", port_name);
 		perror("pthread_create");
 	}
 	this->max_buffer_size = buffer_size;
@@ -258,6 +272,31 @@ int DT8824::bytes_to_int(char* buffer)
 	return ((buffer[0] << 24) & 0xff000000) + ((buffer[1] << 16) & 0xff0000) + ((buffer[2] << 8) & 0xff00) + ((buffer[3]) & 0xff);
 }
 
+void DT8824::performAveraging()
+{
+	while(true)
+	{
+		epicsThreadSleep(this->average_time);
+		lock();
+
+		for(int i = 0; i < NUMBER_OF_CHANNELS; i++)
+		{
+			if(!channels[i].empty())
+			{
+				avg_voltages[i] = std::accumulate(channels[i].begin(), channels[i].end(), 0.0f) / channels[i].size();
+			}
+		}
+
+		channels[0].clear();
+		channels[1].clear();
+		channels[2].clear();
+		channels[3].clear();
+
+		unlock();
+		epicsThreadSleep(0.1);
+	}	
+}
+
 void DT8824::performDAQ()
 {
 	size_t bytes_rx;
@@ -283,7 +322,8 @@ void DT8824::performDAQ()
 		sendCommand(ACQ_INIT, NULL);
 		unlock();
 
-		epicsThreadSleep(this->average_time);
+		// epicsThreadSleep(this->average_time);
+		epicsThreadSleep(1);
 
 		if (frequency_changed)
 		{
@@ -341,10 +381,6 @@ void DT8824::performDAQ()
 		c = 0;
 		channel_data = raw_data + 28;
 		size = 4 * 4 * n;
-		channels[0].clear();
-		channels[1].clear();
-		channels[2].clear();
-		channels[3].clear();
 		for(int i = 0; i < size && i < bytes_rx - 29; i += 4)
 		{
 			bytes = bytes_to_int(channel_data + i);
@@ -362,7 +398,7 @@ void DT8824::performDAQ()
 			if(!channels[i].empty())
 			{
 				voltages[i] = channels[i][channels[i].size() - 1];
-				avg_voltages[i] = std::accumulate(channels[i].begin(), channels[i].end(), 0.0f) / channels[i].size();
+				// avg_voltages[i] = std::accumulate(channels[i].begin(), channels[i].end(), 0.0f) / channels[i].size();
 			}
 		}
 
