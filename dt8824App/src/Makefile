@@ -16,12 +16,13 @@ DBD += dt8824.dbd
 dt8824_DBD += base.dbd
 dt8824_DBD += asyn.dbd
 dt8824_DBD += drvAsynIPPort.dbd
+dt8824_DBD += iocAdmin.dbd
 
 # Include dbd files from all support applications:
 dt8824_DBD += DT8824.dbd
 
 # Add all the support libraries needed by this IOC
-dt8824_LIBS += asyn
+dt8824_LIBS += asyn devIocStats
 
 # dt8824_registerRecordDeviceDriver.cpp derives from dt8824.dbd
 dt8824_SRCS += dt8824_registerRecordDeviceDriver.cpp drvDT8824.cpp
