@@ -54,6 +54,7 @@ class DT8824 : public asynPortDriver
 public:
 	DT8824(const char* port_name, const char* name, int frequency, int buffer_size);
 	virtual asynStatus readFloat64(asynUser* pasynUser, epicsFloat64* value);
+	virtual asynStatus writeFloat64(asynUser* pasynUser, epicsFloat64 value);
 	virtual asynStatus writeInt32(asynUser* pasynUser, epicsInt32 value);
 	virtual asynStatus readOctet(asynUser *pasynUser, char *value, size_t maxChars, size_t *nActual, int *eomReason);
 
@@ -86,9 +87,10 @@ private:
 	double avg_voltages[4];
 	pthread_t daq_thread;
 	pthread_t averaging_thread;
+	pthread_mutex_t avg_mutex;
 	size_t max_buffer_size;
 	bool frequency_changed;
-	int average_time;
+	double average_time;
 };
 
 static void* start_daq_thread(void* pvt)
@@ -132,7 +134,7 @@ DT8824::DT8824(const char* port_name, const char* name, int frequency, int buffe
 	createParam(P_VOLTAGE_AVG_3, asynParamFloat64, &index_avg_voltage_3);
 	createParam(P_VOLTAGE_AVG_4, asynParamFloat64, &index_avg_voltage_4);
 	createParam(P_FREQUENCY,     asynParamInt32, &index_frequency);
-	createParam(P_AVERAGE_TIME, asynParamInt32, &index_average_time);
+	createParam(P_AVERAGE_TIME, asynParamFloat64, &index_average_time);
 	createParam(P_ERROR, asynParamOctet, &index_error);
 
 	sendCommand(ADMIN_LOGIN, NULL);
@@ -152,7 +154,9 @@ DT8824::DT8824(const char* port_name, const char* name, int frequency, int buffe
 	}
 	this->max_buffer_size = buffer_size;
 	this->frequency_changed = false;
-	this->average_time = 1;
+	this->average_time = 1.0;
+
+	pthread_mutex_init(&avg_mutex, NULL);
 }
 
 asynStatus DT8824::readFloat64(asynUser* pasynUser, epicsFloat64* value)
@@ -193,11 +197,20 @@ asynStatus DT8824::writeInt32(asynUser* pasynUser, epicsInt32 value)
 		sendCommand(FREQUENCY_SET, &v);
 		frequency_changed = true;
 	}
-	else if(function == index_average_time)
+	return asynSuccess;
+}
+
+asynStatus DT8824::writeFloat64(asynUser* pasynUser, epicsFloat64 value)
+{
+	int function = pasynUser->reason;
+	if(function == index_average_time)
 	{
+		channels[0].clear();
+		channels[1].clear();
+		channels[2].clear();
+		channels[3].clear();
 		this->average_time = value;
 	}
-
 	return asynSuccess;
 }
 
@@ -276,24 +289,24 @@ void DT8824::performAveraging()
 {
 	while(true)
 	{
-		epicsThreadSleep(this->average_time);
-		lock();
-
-		for(int i = 0; i < NUMBER_OF_CHANNELS; i++)
-		{
-			if(!channels[i].empty())
-			{
-				avg_voltages[i] = std::accumulate(channels[i].begin(), channels[i].end(), 0.0f) / channels[i].size();
-			}
-		}
-
-		channels[0].clear();
-		channels[1].clear();
-		channels[2].clear();
-		channels[3].clear();
-
-		unlock();
-		epicsThreadSleep(0.1);
+		usleep(this->average_time * 1000000);
+//		pthread_mutex_lock(&avg_mutex);
+//
+//		for(int i = 0; i < NUMBER_OF_CHANNELS; i++)
+//		{
+//			if(!channels[i].empty())
+//			{
+//				avg_voltages[i] = std::accumulate(channels[i].begin(), channels[i].end(), 0.0f) / channels[i].size();
+//			}
+//		}
+//
+//		channels[0].clear();
+//		channels[1].clear();
+//		channels[2].clear();
+//		channels[3].clear();
+//
+//		pthread_mutex_unlock(&avg_mutex);
+		// epicsThreadSleep(0.1);
 	}	
 }
 
@@ -322,8 +335,8 @@ void DT8824::performDAQ()
 		sendCommand(ACQ_INIT, NULL);
 		unlock();
 
-		// epicsThreadSleep(this->average_time);
-		epicsThreadSleep(1);
+		usleep(this->average_time * 1000000);
+		// epicsThreadSleep(1);
 
 		if (frequency_changed)
 		{
@@ -334,7 +347,7 @@ void DT8824::performDAQ()
 		lock();
 		memset(raw_data, 0, sizeof(raw_data));
 		memset(command, 0, sizeof(command));
-		snprintf(command, sizeof(command), ACQ_FETCH, 0, n);
+		snprintf(command, sizeof(command), ACQ_FETCH, 0, (int) n * this->average_time);
 		status = pasynOctetSyncIO->writeRead(this->asyn_user, command, strlen(command), raw_data, sizeof(raw_data), 1, &bytes_tx, &bytes_rx, &reason);
 		if(status != asynSuccess || bytes_tx != strlen(command) || (bytes_rx < MIN_RX_BYTES && bytes_rx != EMPTY_SCAN_LENGTH))
 		{
@@ -380,30 +393,37 @@ void DT8824::performDAQ()
 
 		c = 0;
 		channel_data = raw_data + 28;
-		size = 4 * 4 * n;
+		size = 4 * 4 * ((int) n*this->average_time);
 		for(int i = 0; i < size && i < bytes_rx - 29; i += 4)
 		{
 			bytes = bytes_to_int(channel_data + i);
 			if(bytes == 0)
 				continue;
 			sample = 0.000001192 * bytes - 10;
+			pthread_mutex_lock(&avg_mutex);
 			if(channels[c % 4].size() == this->max_buffer_size)
 				channels[c % 4].erase(channels[c % 4].begin());
 			channels[c % 4].push_back(sample);
+			pthread_mutex_unlock(&avg_mutex);
 			c++;
 		}
+		struct timespec tt;
+		clock_gettime(CLOCK_REALTIME, &tt);
+		// cout << tt.tv_sec << "." << tt.tv_nsec << endl;
 
 		for(int i = 0; i < NUMBER_OF_CHANNELS; i++)
 		{
 			if(!channels[i].empty())
 			{
 				voltages[i] = channels[i][channels[i].size() - 1];
-				// avg_voltages[i] = std::accumulate(channels[i].begin(), channels[i].end(), 0.0f) / channels[i].size();
+				avg_voltages[i] = std::accumulate(channels[i].begin(), channels[i].end(), 0.0f) / channels[i].size();
+				setDoubleParam(index_avg_voltage_1 + i, avg_voltages[i]);
 			}
 		}
 
+		callParamCallbacks();
 		unlock();
-		epicsThreadSleep(0.1);
+		// epicsThreadSleep(0.1);
 	}
 }
 

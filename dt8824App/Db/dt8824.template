@@ -1,7 +1,7 @@
 record(ai, "D08-ES-IC$(CH):getVoltage")
 {
 	field(PINI, "YES")
-	field(SCAN, "1 second")
+	field(SCAN, ".1 second")
 	field(DTYP, "asynFloat64")
 	field(INP,  "@asyn(DT, 0, 0) voltage_ch$(CH)")
 	field(PREC, "6")
@@ -10,11 +10,11 @@ record(ai, "D08-ES-IC$(CH):getVoltage")
 record(ai, "D08-ES-IC$(CH):getAverageVoltage")
 {
 	field(PINI, "YES")
-	field(SCAN, "1 second")
+	# field(SCAN, "1 second")
+	field(SCAN, "I/O Intr")
 	field(DTYP, "asynFloat64")
 	field(INP,  "@asyn(DT, 0, 0) avg_voltage_ch$(CH)")
 	field(PREC, "6")
-    field(SCAN, "1 second")
 }
 
 record(ai, "D08-ES-DAQ:getFrequency")
@@ -36,12 +36,13 @@ record(longout, "D08-ES-DAQ:setFrequency")
     field(FLNK, "D08-ES-DAQ:getFrequency")
 }
 
-record(longout, "D08-ES-DAQ:setAveragingTime")
+record(ao, "D08-ES-DAQ:setAveragingTime")
 {
     field(PINI, "YES")
     field(VAL,  "1")
     field(EGU,  "s")
-    field(DTYP, "asynInt32")
+    field(PREC, "1")
+    field(DTYP, "asynFloat64")
     field(OUT,  "@asyn(DT, 0, 0) average_time")
 }
 
