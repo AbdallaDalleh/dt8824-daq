@@ -421,6 +421,11 @@ void DT8824::performDAQ()
 			}
 		}
 
+		channels[0].clear();
+		channels[1].clear();
+		channels[2].clear();
+		channels[3].clear();
+
 		callParamCallbacks();
 		unlock();
 		// epicsThreadSleep(0.1);
