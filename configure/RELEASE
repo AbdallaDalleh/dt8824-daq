@@ -32,6 +32,7 @@
 SUPPORT=/opt/epics/support
 ASYN=$(SUPPORT)/asyn
 IOCSTATS=$(SUPPORT)/iocStats
+SEQ=$(SUPPORT)/seq
 # EPICS_BASE should appear last so earlier modules can override stuff:
 EPICS_BASE = /opt/epics/base
 

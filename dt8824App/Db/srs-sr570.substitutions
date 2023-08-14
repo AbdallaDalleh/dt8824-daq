@@ -1,0 +1,9 @@
+file "/home/control/top/seq/iocApp/Db/App.template"
+{
+pattern {PV}
+	{D08-ES-IC0}
+	{D08-ES-IC1}
+	{D08-ES-IC2}
+	{D08-OP-WM1}
+	{D08-OP-WM2}
+}

@@ -20,12 +20,14 @@ dt8824_DBD += iocAdmin.dbd
 
 # Include dbd files from all support applications:
 dt8824_DBD += DT8824.dbd
+dt8824_DBD += current.dbd
 
 # Add all the support libraries needed by this IOC
-dt8824_LIBS += asyn devIocStats
+dt8824_LIBS += asyn devIocStats seq pv
 
 # dt8824_registerRecordDeviceDriver.cpp derives from dt8824.dbd
 dt8824_SRCS += dt8824_registerRecordDeviceDriver.cpp drvDT8824.cpp
+dt8824_SRCS += current.st
 
 # Build the main IOC entry point on workstation OSs.
 dt8824_SRCS_DEFAULT += dt8824Main.cpp

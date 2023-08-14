@@ -11,7 +11,9 @@ include $(TOP)/configure/CONFIG
 # Create and install (or just install) into <top>/db
 # databases, templates, substitutions like this
 DB += dt8824.db
+DB += srs-sr570.db
 DB_INSTALLS += $(IOCSTATS)/db/iocAdminSoft.db
+
 #----------------------------------------------------
 # If <anyname>.db template is not named <anyname>*.template add
 # <anyname>_template = <templatename>

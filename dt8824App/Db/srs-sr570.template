@@ -1,0 +1,30 @@
+#record(ao, "$(PV):getAverageVoltage")
+#{
+#    field(PINI, "YES")
+#    field(VAL,  "0"  )
+#}
+
+record(ao, "$(PV):getAverageCurrent")
+{
+    field(PINI, "YES")
+    field(VAL,  "0"  )
+}
+
+record(ao, "$(PV):getAccumlatedCurrent")
+{
+    field(PINI, "YES")
+    field(VAL,  "0")
+}
+
+record(ao, "$(PV):setNumberOfPointes")
+{
+    field(PINI, "YES")
+    field(VAL,  "1")
+    field(DRVL, "0.1")
+}
+
+record(ao, "$(PV):getCurrent")
+{
+    field(PINI, "YES")
+    field(VAL,  "0"  )
+}
