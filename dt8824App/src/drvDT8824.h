@@ -23,7 +23,7 @@ using std::accumulate;
 
 #define ADMIN_LOGIN		":SYST:PASS:CEN admin\r\n"
 #define CHANNEL_ENABLE	":AD:ENAB ON, (@1,2,3,4)\r\n"
-#define FREQUENCY_SET	":AD:CLOC:FREQ %d\r\n"
+#define FREQUENCY_SET	":AD:CLOC:FREQ %f\r\n"
 #define FREQUENCY_GET	":AD:CLOCK:FREQ?\r\n"
 #define ACQ_STOP		":AD:ABOR\r\n"
 #define ACQ_ARM			":AD:ARM\r\n"
@@ -52,13 +52,13 @@ using std::accumulate;
 class DT8824 : public asynPortDriver
 {
 public:
-	DT8824(const char* port_name, const char* name, int frequency, int buffer_size);
+	DT8824(const char* port_name, const char* name, double frequency, int buffer_size);
 	virtual asynStatus readFloat64(asynUser* pasynUser, epicsFloat64* value);
 	virtual asynStatus writeFloat64(asynUser* pasynUser, epicsFloat64 value);
 	virtual asynStatus writeInt32(asynUser* pasynUser, epicsInt32 value);
 	virtual asynStatus readOctet(asynUser *pasynUser, char *value, size_t maxChars, size_t *nActual, int *eomReason);
 
-	void sendCommand(string cmd, int* value);
+	void sendCommand(string cmd, double* value);
 	void readCommand(string cmd, char* buffer);
 	void performDAQ();
 	void performAveraging();
@@ -91,4 +91,5 @@ private:
 	size_t max_buffer_size;
 	bool frequency_changed;
 	double average_time;
+	double frequency;
 };

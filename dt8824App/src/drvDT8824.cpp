@@ -14,7 +14,7 @@ static void* start_averaging_thread(void* pvt)
 	return NULL;
 }
 
-DT8824::DT8824(const char* port_name, const char* name, int frequency, int buffer_size)
+DT8824::DT8824(const char* port_name, const char* name, double frequency, int buffer_size)
 	: asynPortDriver(port_name,
 					1,
 					asynFloat64Mask | asynInt32Mask | asynOctetMask | asynDrvUserMask,
@@ -40,7 +40,7 @@ DT8824::DT8824(const char* port_name, const char* name, int frequency, int buffe
 	createParam(P_VOLTAGE_AVG_2, asynParamFloat64, &index_avg_voltage_2);
 	createParam(P_VOLTAGE_AVG_3, asynParamFloat64, &index_avg_voltage_3);
 	createParam(P_VOLTAGE_AVG_4, asynParamFloat64, &index_avg_voltage_4);
-	createParam(P_FREQUENCY,     asynParamInt32, &index_frequency);
+	createParam(P_FREQUENCY,     asynParamFloat64, &index_frequency);
 	createParam(P_AVERAGE_TIME, asynParamFloat64, &index_average_time);
 	createParam(P_ERROR, asynParamOctet, &index_error);
 
@@ -54,14 +54,18 @@ DT8824::DT8824(const char* port_name, const char* name, int frequency, int buffe
 		printf("Could not create DAQ thread for port %s\n", port_name);
 		perror("pthread_create");
 	}
-	if(pthread_create(&averaging_thread, 0, start_averaging_thread, this) != 0)
-	{
-		printf("Could not create Averaging thread for port %s\n", port_name);
-		perror("pthread_create");
-	}
-	this->max_buffer_size = buffer_size;
+	//if(pthread_create(&averaging_thread, 0, start_averaging_thread, this) != 0)
+	//{
+	//	printf("Could not create Averaging thread for port %s\n", port_name);
+	//	perror("pthread_create");
+	//}
+	this->max_buffer_size = static_cast<int>(frequency / 2.5);
 	this->frequency_changed = false;
-	this->average_time = 1.0;
+	this->average_time = 0.5;
+	this->frequency = frequency;
+
+	cout << "Frequency: " << frequency << endl;
+	cout << "Buffer size: " << this->max_buffer_size << endl;
 
 	pthread_mutex_init(&avg_mutex, NULL);
 }
@@ -85,6 +89,7 @@ asynStatus DT8824::readFloat64(asynUser* pasynUser, epicsFloat64* value)
 		}
 
 		*value = atof(buffer);
+		this->frequency = *value;
 	}
 	else
 	{
@@ -96,14 +101,7 @@ asynStatus DT8824::readFloat64(asynUser* pasynUser, epicsFloat64* value)
 
 asynStatus DT8824::writeInt32(asynUser* pasynUser, epicsInt32 value)
 {
-	int function = pasynUser->reason;
-	if(function == index_frequency)
-	{
-		sendCommand(ACQ_STOP, NULL);
-		int v = value;
-		sendCommand(FREQUENCY_SET, &v);
-		frequency_changed = true;
-	}
+	// int function = pasynUser->reason;
 	return asynSuccess;
 }
 
@@ -117,7 +115,24 @@ asynStatus DT8824::writeFloat64(asynUser* pasynUser, epicsFloat64 value)
 		channels[2].clear();
 		channels[3].clear();
 		this->average_time = value;
+		cout << "Set average_time to " << this->average_time << " seconds" << endl;
 	}
+	else if(function == index_frequency)
+	{
+		sendCommand(ACQ_STOP, NULL);
+		double v = value;
+		cout << "Frequency Set: " << value << endl;
+		sendCommand(FREQUENCY_SET, &v);
+		frequency_changed = true;
+		this->max_buffer_size = static_cast<int>(value / 2.5);
+		cout << "N samples: " << this->max_buffer_size << endl;
+	}
+	else
+	{
+		cout << "Unknown float64 function." << endl;
+		return asynError;
+	}
+
 	return asynSuccess;
 }
 
@@ -146,7 +161,7 @@ asynStatus DT8824::readOctet(asynUser *pasynUser, char *value, size_t maxChars, 
 	return asynSuccess;
 }
 
-void DT8824::sendCommand(string cmd, int* value)
+void DT8824::sendCommand(string cmd, double* value)
 {
 	int status;
 	char command[50];
@@ -196,7 +211,10 @@ void DT8824::performAveraging()
 {
 	while(true)
 	{
-		usleep(this->average_time * 1000000);
+		long sleep_time = static_cast<long>(this->average_time * 1000000);  // Convert seconds to microseconds
+		// cout << "caclulated sleep time: "<< sleep_time<<endl;
+        usleep(sleep_time);
+		//usleep(this->average_time * 1000000);
 //		pthread_mutex_lock(&avg_mutex);
 //
 //		for(int i = 0; i < NUMBER_OF_CHANNELS; i++)
@@ -221,7 +239,7 @@ void DT8824::performDAQ()
 {
 	size_t bytes_rx;
 	size_t bytes_tx;
-	int n = 5;
+	int n = this->max_buffer_size;
 	int c = 0;
 	int size;
 	int reason;
@@ -236,13 +254,15 @@ void DT8824::performDAQ()
 	double sample;
 	while(true)
 	{
+		printf("Acquiring | f = %.1f | N = %d | t = %.1f\n", this->frequency, this->max_buffer_size, this->average_time);
 		lock();
 		sendCommand(ACQ_STOP, NULL);
 		sendCommand(ACQ_ARM, NULL);
 		sendCommand(ACQ_INIT, NULL);
 		unlock();
-
-		usleep(this->average_time * 1000000);
+		long sleep_time = static_cast<long>(this->average_time * 1000000);  // Convert to microseconds
+        usleep(sleep_time);
+		// usleep(this->average_time * 1000000);
 		// epicsThreadSleep(1);
 
 		if (frequency_changed)
@@ -300,7 +320,7 @@ void DT8824::performDAQ()
 
 		c = 0;
 		channel_data = raw_data + 28;
-		size = 4 * 4 * ((int) n*this->average_time);
+		size = 4 * 4 * ((int) n * this->average_time);
 		for(int i = 0; i < size && i < bytes_rx - 29; i += 4)
 		{
 			bytes = bytes_to_int(channel_data + i);
@@ -339,7 +359,7 @@ void DT8824::performDAQ()
 	}
 }
 
-extern "C" int DT8824Configure(const char* port_name, const char* name, int frequency, int buffer_size)
+extern "C" int DT8824Configure(const char* port_name, const char* name, double frequency, int buffer_size)
 {
 	new DT8824(port_name, name, frequency, buffer_size);
 	return asynSuccess;
@@ -347,14 +367,14 @@ extern "C" int DT8824Configure(const char* port_name, const char* name, int freq
 
 static const iocshArg configArg0 = { "Port name", iocshArgString };
 static const iocshArg configArg1 = { "Asyn name", iocshArgString };
-static const iocshArg configArg2 = { "Frequency", iocshArgInt };
+static const iocshArg configArg2 = { "Frequency", iocshArgDouble };
 static const iocshArg configArg3 = { "Buffer Size", iocshArgInt };
 static const iocshArg* const configArgs[] = {&configArg0, &configArg1, &configArg2, &configArg3};
 static const iocshFuncDef configFuncDef = {"DT8824Configure",4,configArgs};
 
 static void configCallFunc(const iocshArgBuf *args)
 {
-    DT8824Configure(args[0].sval, args[1].sval, args[2].ival, args[3].ival);
+    DT8824Configure(args[0].sval, args[1].sval, args[2].dval, args[3].ival);
 }
 
 void drvDT8824Register(void)
